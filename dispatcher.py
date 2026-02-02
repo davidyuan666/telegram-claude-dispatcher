@@ -148,17 +148,24 @@ class ClaudeDispatcherSimple:
 
 【重要提示】
 1. 首先使用 /mcp list-tools 查看所有可用的 MCP 工具
-2. 优先使用 MCP 工具来完成任务（如 arxiv 搜索、12306 查询、文件发送等）
+2. 优先使用 MCP 工具来完成任务
 3. 消息已经由调度器获取，你不需要再调用 mcp__telegram-receiver__check_pending_messages
-4. 使用 mcp__telegram-sender__send_telegram_message 发送回复到对应的 chat_id
-5. 如果需要发送文件，使用 mcp__telegram-file-sender 相关工具
+
+【MCP 工具使用指南】
+- 发送文本消息: mcp__telegram-sender__send_telegram_message
+- 发送文档/PDF: mcp__telegram-file-sender__send_telegram_document
+- 发送图片: mcp__telegram-file-sender__send_telegram_photo
+- 搜索论文: mcp__arxiv-search__search_arxiv_papers
+- 查询火车票: mcp__12306-mcp__get-tickets
+- 医学搜索: mcp__medical-search__search_pubmed_papers
+- 文档转换: mcp__document-converter__convert_markdown_to_pdf
 
 【工作流程】
-1. 查看可用的 MCP 工具
+1. 查看可用的 MCP 工具 (/mcp list-tools)
 2. 理解用户的需求
 3. 根据需求选择合适的 MCP 工具处理
-4. 生成回复内容
-5. 使用 mcp__telegram-sender__send_telegram_message 发送回复
+4. 如果需要生成文件（如 PDF），先生成文件，再使用 mcp__telegram-file-sender 发送
+5. 使用 mcp__telegram-sender__send_telegram_message 发送文本回复到对应的 chat_id
 
 完成后输出 "TASK_COMPLETE"。
 """
