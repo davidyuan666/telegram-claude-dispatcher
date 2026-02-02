@@ -114,11 +114,11 @@ class ClaudeDispatcherSimple:
                 logger.info("💤 跳过本次处理，节省资源")
                 return True
 
-            # 第二步：获取消息详情
+            # 第二步：获取消息详情（但不标记为已读）
             logger.info("📬 发现新消息！")
             logger.info("📥 获取消息详情...")
 
-            messages = self.telegram_utils.get_pending_messages()
+            messages = self.telegram_utils.get_pending_messages(mark_as_read=False)
             if not messages:
                 logger.warning("⚠️ 无法获取消息详情")
                 return False
@@ -175,12 +175,15 @@ class ClaudeDispatcherSimple:
             logger.info("🚀 正在启动 Claude CLI...")
 
             # 使用 Popen 以便实时显示输出
+            # 重要：指定 encoding='utf-8' 避免 Windows 上的 GBK 编码问题
             process = subprocess.Popen(
                 ['claude', '--dangerously-skip-permissions', prompt],
                 cwd=WORKSPACE_DIR,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
                 text=True,
+                encoding='utf-8',
+                errors='replace',  # 遇到无法解码的字符时替换而不是报错
                 bufsize=1,
                 shell=True
             )
@@ -285,9 +288,18 @@ class ClaudeDispatcherSimple:
 
             if process.returncode == 0:
                 logger.info("✅ 任务执行成功")
+
+                # 只有在成功处理后才确认消息（标记为已读）
+                update_ids = [msg['update_id'] for msg in messages]
+                if self.telegram_utils.acknowledge_messages(update_ids):
+                    logger.info(f"✅ 已确认 {len(messages)} 条消息处理完成")
+                else:
+                    logger.warning("⚠️ 确认消息失败，下次可能会重复处理")
+
                 return True
             else:
                 logger.warning(f"⚠️ 任务执行失败 (返回码: {process.returncode})")
+                logger.warning("⚠️ 消息未确认，下次检查时会重新处理")
                 return False
 
         except subprocess.TimeoutExpired as e:

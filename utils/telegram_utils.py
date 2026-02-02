@@ -95,12 +95,16 @@ class TelegramUtils:
             logger.error(f"检查消息异常: {e}")
             return False
 
-    def get_pending_messages(self) -> List[Dict]:
+    def get_pending_messages(self, mark_as_read: bool = True) -> List[Dict]:
         """
         获取待处理的消息
 
+        Args:
+            mark_as_read: 是否立即标记为已读（默认True，保持向后兼容）
+
         Returns:
             List[Dict]: 消息列表，每条消息包含：
+                - update_id: Update ID（用于后续确认）
                 - message_id: 消息ID
                 - chat_id: 聊天ID
                 - user: 用户信息 (username, first_name)
@@ -130,16 +134,20 @@ class TelegramUtils:
                 return []
 
             messages = []
+            max_update_id = self.last_update_id
+
             for update in updates:
-                # 更新 last_update_id
                 update_id = update['update_id']
-                if update_id > self.last_update_id:
-                    self._save_last_update_id(update_id)
+
+                # 记录最大的 update_id
+                if update_id > max_update_id:
+                    max_update_id = update_id
 
                 # 提取消息信息
                 if 'message' in update:
                     msg = update['message']
                     messages.append({
+                        'update_id': update_id,  # 添加 update_id
                         'message_id': msg.get('message_id'),
                         'chat_id': msg['chat']['id'],
                         'user': {
@@ -150,11 +158,40 @@ class TelegramUtils:
                         'date': msg.get('date')
                     })
 
+            # 如果设置了 mark_as_read，立即更新 last_update_id
+            if mark_as_read and max_update_id > self.last_update_id:
+                self._save_last_update_id(max_update_id)
+
             return messages
 
         except Exception as e:
             logger.error(f"获取消息异常: {e}")
             return []
+
+    def acknowledge_messages(self, update_ids: List[int]) -> bool:
+        """
+        确认消息已处理，更新 last_update_id
+
+        Args:
+            update_ids: 要确认的 update_id 列表
+
+        Returns:
+            bool: 是否成功
+        """
+        try:
+            if not update_ids:
+                return True
+
+            max_update_id = max(update_ids)
+            if max_update_id > self.last_update_id:
+                self._save_last_update_id(max_update_id)
+                logger.info(f"已确认消息处理完成，更新 last_update_id 到: {max_update_id}")
+                return True
+            return True
+
+        except Exception as e:
+            logger.error(f"确认消息异常: {e}")
+            return False
 
     def send_message(self, chat_id: int, text: str) -> bool:
         """
