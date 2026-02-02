@@ -20,7 +20,7 @@ logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(levelname)s - %(message)s',
     handlers=[
-        logging.FileHandler('claude_dispatcher_simple.log', encoding='utf-8'),
+        logging.FileHandler('dispatcher.log', encoding='utf-8'),
         logging.StreamHandler()
     ]
 )
@@ -32,10 +32,12 @@ if sys.platform == 'win32':
     sys.stderr.reconfigure(encoding='utf-8')
 
 # 配置
-WORKSPACE_DIR = r'C:\workspace\claudecodelabspace'
-CHECK_INTERVAL = 30  # 检查间隔（秒）
-LOCK_FILE = r'C:\workspace\claudecodelabspace\dispatcher_simple.lock'
-TELEGRAM_ENV_FILE = r'C:\workspace\claudecodelabspace\mcps\TelegramReceiverMCP\.env'
+PROJECT_DIR = Path(__file__).parent
+WORKSPACE_DIR = PROJECT_DIR
+CHECK_INTERVAL = 10  # 检查间隔（秒）- 从30秒改为10秒
+TASK_TIMEOUT = 180  # 任务超时时间（秒）- 3分钟
+LOCK_FILE = PROJECT_DIR / 'dispatcher.lock'
+TELEGRAM_ENV_FILE = PROJECT_DIR / '.env'
 
 
 class ClaudeDispatcherSimple:
@@ -112,20 +114,51 @@ class ClaudeDispatcherSimple:
                 logger.info("💤 跳过本次处理，节省资源")
                 return True
 
-            # 第二步：有新消息，启动 Claude CLI 处理
+            # 第二步：获取消息详情
             logger.info("📬 发现新消息！")
+            logger.info("📥 获取消息详情...")
+
+            messages = self.telegram_utils.get_pending_messages()
+            if not messages:
+                logger.warning("⚠️ 无法获取消息详情")
+                return False
+
+            logger.info(f"📊 获取到 {len(messages)} 条消息")
+            for i, msg in enumerate(messages, 1):
+                logger.info(f"   消息 {i}: Chat ID={msg['chat_id']}, 用户={msg['user']['username']}")
+                logger.info(f"           内容: {msg['text'][:50]}...")
+
+            # 第三步：启动 Claude CLI 处理
             logger.info("📤 启动 Claude CLI 处理消息...")
             logger.info("-" * 60)
 
-            # 创建提示词
-            prompt = """请处理新的 Telegram 消息。
+            # 创建提示词 - 包含消息详情
+            messages_info = "\n".join([
+                f"消息 {i}:\n"
+                f"  - Chat ID: {msg['chat_id']}\n"
+                f"  - 用户: {msg['user']['username']} ({msg['user']['first_name']})\n"
+                f"  - 内容: {msg['text']}\n"
+                for i, msg in enumerate(messages, 1)
+            ])
+
+            prompt = f"""你收到了 {len(messages)} 条新的 Telegram 消息，需要处理并回复。
+
+【消息详情】
+{messages_info}
+
+【重要提示】
+1. 首先使用 /mcp list-tools 查看所有可用的 MCP 工具
+2. 优先使用 MCP 工具来完成任务（如 arxiv 搜索、12306 查询、文件发送等）
+3. 消息已经由调度器获取，你不需要再调用 mcp__telegram-receiver__check_pending_messages
+4. 使用 mcp__telegram-sender__send_telegram_message 发送回复到对应的 chat_id
+5. 如果需要发送文件，使用 mcp__telegram-file-sender 相关工具
 
 【工作流程】
-1. 使用 mcp__telegram-receiver__check_pending_messages 获取新消息
+1. 查看可用的 MCP 工具
 2. 理解用户的需求
-3. 生成合适的回复
-4. 使用 mcp__telegram-sender__send_telegram_message 发送回复
-5. 如果需要，使用其他 MCP 工具（arxiv搜索、12306查询等）
+3. 根据需求选择合适的 MCP 工具处理
+4. 生成回复内容
+5. 使用 mcp__telegram-sender__send_telegram_message 发送回复
 
 完成后输出 "TASK_COMPLETE"。
 """
@@ -164,8 +197,8 @@ class ClaudeDispatcherSimple:
 
                     # 检查是否超时
                     elapsed = time.time() - start_time
-                    if elapsed > 120:  # 2分钟超时
-                        logger.error("❌ 执行超时（120秒），强制终止")
+                    if elapsed > TASK_TIMEOUT:
+                        logger.error(f"❌ 执行超时（{TASK_TIMEOUT}秒），强制终止")
                         process.kill()
                         break
 
