@@ -58,18 +58,26 @@ class TelegramUtils:
         except Exception as e:
             logger.error(f"保存 last_update_id 失败: {e}")
 
-    def check_new_messages(self, mark_as_read: bool = False, max_retries: int = 2) -> bool:
+    def check_new_messages(self, mark_as_read: bool = False, max_retries: int = 2, long_polling: bool = True) -> bool:
         """
-        快速检查是否有新消息（不获取消息内容，带重试）
+        快速检查是否有新消息（支持长轮询，减少请求频率）
 
         Args:
             mark_as_read: 是否标记为已读
             max_retries: 最大重试次数（默认2次）
+            long_polling: 是否使用长轮询（默认True）
+                         True: Telegram服务器等待25秒再返回，大幅减少请求
+                         False: 立即返回
 
         Returns:
             bool: 是否有新消息
         """
         import time
+
+        # 长轮询配置：让服务器等待最多25秒
+        # 这样可以从"每10秒请求一次"变为"有消息才返回"
+        polling_timeout = 25 if long_polling else 0
+        request_timeout = 30 if long_polling else 8
 
         for attempt in range(max_retries):
             try:
@@ -77,10 +85,10 @@ class TelegramUtils:
                 params = {
                     'offset': self.last_update_id + 1,
                     'limit': 1,
-                    'timeout': 0
+                    'timeout': polling_timeout
                 }
 
-                response = requests.get(url, params=params, timeout=8)
+                response = requests.get(url, params=params, timeout=request_timeout)
 
                 if response.status_code == 200:
                     data = response.json()

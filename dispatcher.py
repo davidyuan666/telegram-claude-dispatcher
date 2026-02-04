@@ -46,10 +46,11 @@ if TELEGRAM_ENV_FILE.exists():
                 os.environ[key.strip()] = value.strip()
 
 # 从环境变量读取配置
-CHECK_INTERVAL = int(os.getenv('POLLING_INTERVAL', 10))
+CHECK_INTERVAL = int(os.getenv('POLLING_INTERVAL', 2))  # 长轮询模式下，间隔可以很短
 TASK_TIMEOUT = 180  # 任务超时时间（秒）
 LOCK_FILE = PROJECT_DIR / 'dispatcher.lock'
 CLAUDE_CLI_PATH = os.getenv('CLAUDE_CLI_PATH', 'claude')
+ENABLE_LONG_POLLING = os.getenv('ENABLE_LONG_POLLING', 'true').lower() == 'true'  # 启用长轮询
 
 
 class TelegramClaudeDispatcher:
@@ -139,11 +140,11 @@ class TelegramClaudeDispatcher:
             logger.info("🔔 开始新的检查周期")
             logger.info("=" * 60)
 
-            # 第一步：快速检查是否有新消息
-            logger.info("📥 快速检查是否有新的 Telegram 消息...")
+            # 第一步：快速检查是否有新消息（使用长轮询）
+            logger.info("📥 检查 Telegram 消息（长轮询模式）...")
             check_start = time.time()
 
-            has_messages = self.telegram_utils.check_new_messages()
+            has_messages = self.telegram_utils.check_new_messages(long_polling=ENABLE_LONG_POLLING)
             check_elapsed = time.time() - check_start
             logger.info(f"   检查耗时: {check_elapsed:.2f}秒")
 
@@ -264,6 +265,7 @@ class TelegramClaudeDispatcher:
         logger.info("=" * 60)
         logger.info(f"📁 工作目录: {WORKSPACE_DIR}")
         logger.info(f"⏰ 检查间隔: {CHECK_INTERVAL}秒")
+        logger.info(f"📡 长轮询: {'启用（减少请求频率）' if ENABLE_LONG_POLLING else '禁用'}")
         logger.info(f"🤖 Claude CLI: {CLAUDE_CLI_PATH}")
         logger.info(f"🔍 平台: {sys.platform}")
         logger.info(f"🔍 是否.cmd文件: {CLAUDE_CLI_PATH.endswith('.cmd')}")
