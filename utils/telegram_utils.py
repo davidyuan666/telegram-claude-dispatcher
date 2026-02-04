@@ -58,49 +58,66 @@ class TelegramUtils:
         except Exception as e:
             logger.error(f"保存 last_update_id 失败: {e}")
 
-    def check_new_messages(self, mark_as_read: bool = False) -> bool:
+    def check_new_messages(self, mark_as_read: bool = False, max_retries: int = 2) -> bool:
         """
-        快速检查是否有新消息（不获取消息内容）
+        快速检查是否有新消息（不获取消息内容，带重试）
 
         Args:
             mark_as_read: 是否标记为已读
+            max_retries: 最大重试次数（默认2次）
 
         Returns:
             bool: 是否有新消息
         """
-        try:
-            url = f"{self.base_url}/getUpdates"
-            params = {
-                'offset': self.last_update_id + 1,
-                'limit': 1,
-                'timeout': 0
-            }
+        import time
 
-            response = requests.get(url, params=params, timeout=5)
+        for attempt in range(max_retries):
+            try:
+                url = f"{self.base_url}/getUpdates"
+                params = {
+                    'offset': self.last_update_id + 1,
+                    'limit': 1,
+                    'timeout': 0
+                }
 
-            if response.status_code == 200:
-                data = response.json()
-                if data.get('ok') and data.get('result'):
-                    if mark_as_read and data['result']:
-                        # 标记为已读
-                        latest_update_id = data['result'][-1]['update_id']
-                        self._save_last_update_id(latest_update_id)
-                    return True
+                response = requests.get(url, params=params, timeout=8)
+
+                if response.status_code == 200:
+                    data = response.json()
+                    if data.get('ok') and data.get('result'):
+                        if mark_as_read and data['result']:
+                            latest_update_id = data['result'][-1]['update_id']
+                            self._save_last_update_id(latest_update_id)
+                        return True
+                    return False
+                else:
+                    logger.error(f"检查消息失败: {response.status_code}")
+                    if attempt < max_retries - 1:
+                        time.sleep(1)
+                        continue
+                    return False
+
+            except (requests.exceptions.ConnectionError,
+                    requests.exceptions.Timeout) as e:
+                if attempt < max_retries - 1:
+                    logger.warning(f"网络错误，重试中...")
+                    time.sleep(1)
+                else:
+                    logger.error(f"检查消息网络异常: {e}")
+                    return False
+            except Exception as e:
+                logger.error(f"检查消息异常: {e}")
                 return False
-            else:
-                logger.error(f"检查消息失败: {response.status_code}")
-                return False
 
-        except Exception as e:
-            logger.error(f"检查消息异常: {e}")
-            return False
+        return False
 
-    def get_pending_messages(self, mark_as_read: bool = True) -> List[Dict]:
+    def get_pending_messages(self, mark_as_read: bool = True, max_retries: int = 3) -> List[Dict]:
         """
-        获取待处理的消息
+        获取待处理的消息（带重试机制）
 
         Args:
             mark_as_read: 是否立即标记为已读（默认True，保持向后兼容）
+            max_retries: 最大重试次数（默认3次）
 
         Returns:
             List[Dict]: 消息列表，每条消息包含：
@@ -111,62 +128,87 @@ class TelegramUtils:
                 - text: 消息文本
                 - date: 消息时间
         """
-        try:
-            url = f"{self.base_url}/getUpdates"
-            params = {
-                'offset': self.last_update_id + 1,
-                'timeout': 0
-            }
+        import time
 
-            response = requests.get(url, params=params, timeout=10)
+        for attempt in range(max_retries):
+            try:
+                url = f"{self.base_url}/getUpdates"
+                params = {
+                    'offset': self.last_update_id + 1,
+                    'timeout': 0
+                }
 
-            if response.status_code != 200:
-                logger.error(f"获取消息失败: {response.status_code}")
-                return []
+                response = requests.get(url, params=params, timeout=15)
 
-            data = response.json()
-            if not data.get('ok'):
-                logger.error(f"API 返回错误: {data}")
-                return []
+                if response.status_code != 200:
+                    logger.error(f"获取消息失败: {response.status_code}")
+                    if attempt < max_retries - 1:
+                        logger.info(f"🔄 重试 {attempt + 1}/{max_retries}...")
+                        time.sleep(2)
+                        continue
+                    return []
 
-            updates = data.get('result', [])
-            if not updates:
-                return []
+                data = response.json()
+                if not data.get('ok'):
+                    logger.error(f"API 返回错误: {data}")
+                    return []
 
-            messages = []
-            max_update_id = self.last_update_id
+                updates = data.get('result', [])
+                if not updates:
+                    return []
 
-            for update in updates:
-                update_id = update['update_id']
+                messages = []
+                max_update_id = self.last_update_id
 
-                # 记录最大的 update_id
-                if update_id > max_update_id:
-                    max_update_id = update_id
+                for update in updates:
+                    update_id = update['update_id']
 
-                # 提取消息信息
-                if 'message' in update:
-                    msg = update['message']
-                    messages.append({
-                        'update_id': update_id,  # 添加 update_id
-                        'message_id': msg.get('message_id'),
-                        'chat_id': msg['chat']['id'],
-                        'user': {
-                            'username': msg['from'].get('username', ''),
-                            'first_name': msg['from'].get('first_name', ''),
-                        },
-                        'text': msg.get('text', ''),
-                        'date': msg.get('date')
-                    })
+                    # 记录最大的 update_id
+                    if update_id > max_update_id:
+                        max_update_id = update_id
 
-            # 如果设置了 mark_as_read，立即更新 last_update_id
-            if mark_as_read and max_update_id > self.last_update_id:
-                self._save_last_update_id(max_update_id)
+                    # 提取消息信息
+                    if 'message' in update:
+                        msg = update['message']
+                        messages.append({
+                            'update_id': update_id,
+                            'message_id': msg.get('message_id'),
+                            'chat_id': msg['chat']['id'],
+                            'user': {
+                                'username': msg['from'].get('username', ''),
+                                'first_name': msg['from'].get('first_name', ''),
+                            },
+                            'text': msg.get('text', ''),
+                            'date': msg.get('date')
+                        })
 
-            return messages
+                # 如果设置了 mark_as_read，立即更新 last_update_id
+                if mark_as_read and max_update_id > self.last_update_id:
+                    self._save_last_update_id(max_update_id)
 
-        except Exception as e:
-            logger.error(f"获取消息异常: {e}")
-            return []
+                return messages
+
+            except (requests.exceptions.ConnectionError,
+                    requests.exceptions.Timeout,
+                    ConnectionResetError) as e:
+                logger.warning(f"网络错误 (尝试 {attempt + 1}/{max_retries}): {e}")
+                if attempt < max_retries - 1:
+                    wait_time = 2 ** attempt  # 指数退避：2, 4, 8秒
+                    logger.info(f"⏳ 等待 {wait_time} 秒后重试...")
+                    time.sleep(wait_time)
+                else:
+                    logger.error(f"❌ 达到最大重试次数，放弃获取消息")
+                    return []
+
+            except Exception as e:
+                logger.error(f"获取消息异常: {e}")
+                if attempt < max_retries - 1:
+                    logger.info(f"🔄 重试 {attempt + 1}/{max_retries}...")
+                    time.sleep(2)
+                else:
+                    return []
+
+        return []
 
     def acknowledge_messages(self, update_ids: List[int]) -> bool:
         """
@@ -193,41 +235,67 @@ class TelegramUtils:
             logger.error(f"确认消息异常: {e}")
             return False
 
-    def send_message(self, chat_id: int, text: str) -> bool:
+    def send_message(self, chat_id: int, text: str, max_retries: int = 3) -> bool:
         """
-        发送消息到指定的聊天
+        发送消息到指定的聊天（带重试机制）
 
         Args:
             chat_id: 聊天ID
             text: 消息文本
+            max_retries: 最大重试次数（默认3次）
 
         Returns:
             bool: 是否发送成功
         """
-        try:
-            url = f"{self.base_url}/sendMessage"
-            data = {
-                'chat_id': chat_id,
-                'text': text
-            }
+        import time
 
-            response = requests.post(url, json=data, timeout=10)
+        for attempt in range(max_retries):
+            try:
+                url = f"{self.base_url}/sendMessage"
+                data = {
+                    'chat_id': chat_id,
+                    'text': text
+                }
 
-            if response.status_code == 200:
-                result = response.json()
-                if result.get('ok'):
-                    logger.info(f"消息发送成功到 chat_id: {chat_id}")
-                    return True
+                response = requests.post(url, json=data, timeout=15)
+
+                if response.status_code == 200:
+                    result = response.json()
+                    if result.get('ok'):
+                        logger.info(f"消息发送成功到 chat_id: {chat_id}")
+                        return True
+                    else:
+                        logger.error(f"发送消息失败: {result}")
+                        if attempt < max_retries - 1:
+                            time.sleep(2)
+                            continue
+                        return False
                 else:
-                    logger.error(f"发送消息失败: {result}")
+                    logger.error(f"发送消息失败: HTTP {response.status_code}")
+                    if attempt < max_retries - 1:
+                        time.sleep(2)
+                        continue
                     return False
-            else:
-                logger.error(f"发送消息失败: HTTP {response.status_code}")
-                return False
 
-        except Exception as e:
-            logger.error(f"发送消息异常: {e}")
-            return False
+            except (requests.exceptions.ConnectionError,
+                    requests.exceptions.Timeout) as e:
+                logger.warning(f"发送消息网络错误 (尝试 {attempt + 1}/{max_retries}): {e}")
+                if attempt < max_retries - 1:
+                    wait_time = 2 ** attempt
+                    logger.info(f"⏳ 等待 {wait_time} 秒后重试...")
+                    time.sleep(wait_time)
+                else:
+                    logger.error(f"❌ 达到最大重试次数，发送失败")
+                    return False
+
+            except Exception as e:
+                logger.error(f"发送消息异常: {e}")
+                if attempt < max_retries - 1:
+                    time.sleep(2)
+                else:
+                    return False
+
+        return False
 
 
 # 便捷函数
