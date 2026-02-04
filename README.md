@@ -1,29 +1,46 @@
-# Telegram Claude Dispatcher
+# Telegram Claude Dispatcher - 重构版
 
-一个智能的 Telegram 消息调度器，自动检测新消息并调用 Claude CLI 进行处理和回复。
+一个智能的 Telegram 消息调度器，仿照 OpenCrawl 架构设计，自动检测新消息并调用无头 Claude CLI 进行处理和回复。
 
 ## ✨ 特性
 
 - 🚀 **智能检测** - 使用独立的 utils 模块快速检查新消息（1-2秒）
 - 💡 **按需启动** - 只在有新消息时才启动 Claude CLI，节省资源
+- 🏗️ **模块化架构** - 仿照 OpenCrawl，清晰的模块划分
 - 📊 **详细进度** - 实时显示执行状态、耗时、工具使用情况
-- 🔒 **进程管理** - 自动管理进程生命周期，防止重复运行
+- 🔒 **Sandbox 模式** - 默认启用 sandbox 模式，确保安全隔离
+- 📦 **会话隔离** - 每个请求使用独立会话，避免任务间干扰
+- 🗑️ **自动清理** - 任务完成后自动清理会话资源
 - 🛡️ **错误处理** - 完善的超时保护和异常处理机制
+- 🔄 **自动重试** - 失败的消息会在下次检查时重新处理
+- ⚙️ **可配置** - 通过环境变量灵活配置
 
-## 🏗️ 架构
+## 🏗️ 架构（仿照 OpenCrawl）
 
 ```
-调度器 (每30秒)
+Telegram Bot
     ↓
-utils 快速检查（1-2秒）
+Dispatcher (定时检查)
+    ↓
+Utils 快速检查（1-2秒）
     ↓
 有新消息？
     ├─ 否 → 跳过，等待下次
-    └─ 是 → 启动 Claude CLI
+    └─ 是 → SessionManager (创建独立会话)
+            ↓
+        MessageProcessor
+            ↓
+        无头 Claude CLI (Sandbox 模式)
+            ↓
+        独立会话目录 (.claude_sessions/session_xxx/)
             ↓
         MCP 工具处理
             ↓
-        发送回复
+        HookHandler 解析结果
+            ↓
+        返回 Telegram
+            ↓
+        SessionManager (清理会话)
 ```
 
 ## 📦 安装
@@ -50,7 +67,11 @@ pip install -r requirements.txt
 3. 配置环境变量
 ```bash
 cp .env.example .env
-# 编辑 .env 文件，填入你的 Telegram Bot Token
+# 编辑 .env 文件，填入以下配置：
+# TELEGRAM_BOT_TOKEN=你的bot token
+# TELEGRAM_CHAT_ID=你的chat id
+# CLAUDE_CLI_PATH=Claude CLI路径（可选）
+# POLLING_INTERVAL=轮询间隔秒数（可选，默认10）
 ```
 
 ## 🚀 使用
@@ -63,11 +84,26 @@ python dispatcher.py
 
 ### 配置说明
 
-在 `dispatcher.py` 中可以配置：
+在 `.env` 文件中配置：
 
-- `CHECK_INTERVAL` - 检查间隔（默认30秒）
-- `WORKSPACE_DIR` - 工作目录
-- `TELEGRAM_ENV_FILE` - Telegram 配置文件路径
+- `TELEGRAM_BOT_TOKEN` - Telegram Bot Token（必需）
+- `TELEGRAM_CHAT_ID` - 默认聊天ID（必需）
+- `CLAUDE_CLI_PATH` - Claude CLI路径（可选，默认为 'claude'）
+- `ENABLE_SANDBOX` - 是否启用 sandbox 模式（可选，默认为 'true'，强烈推荐）
+- `POLLING_INTERVAL` - 检查间隔秒数（可选，默认10秒）
+
+**重要安全说明：**
+- 默认启用 `ENABLE_SANDBOX=true`，确保每个任务在隔离环境中运行
+- 每个请求使用独立的会话目录，避免任务间相互干扰
+- 会话完成后自动清理资源，保留日志用于调试
+
+### 核心模块
+
+- **dispatcher.py** - 主调度器，协调各组件工作
+- **core/message_processor.py** - 消息处理器，调用无头Claude CLI（支持sandbox和会话隔离）
+- **core/session_manager.py** - 会话管理器，管理独立会话的生命周期
+- **core/hook_handler.py** - Hook处理器，解析Claude输出
+- **utils/telegram_utils.py** - Telegram工具，快速检查和发送消息
 
 ## 📊 运行示例
 
@@ -114,14 +150,20 @@ python dispatcher.py
 
 ```
 telegram-claude-dispatcher/
-├── dispatcher.py           # 主调度器
-├── utils/
+├── dispatcher.py           # 主调度器（重构版）
+├── core/                   # 核心模块
 │   ├── __init__.py
-│   └── telegram_utils.py   # Telegram 工具模块
+│   ├── message_processor.py   # 消息处理器（支持sandbox和会话隔离）
+│   ├── session_manager.py     # 会话管理器
+│   └── hook_handler.py        # Hook处理器
+├── utils/                  # 工具模块
+│   ├── __init__.py
+│   └── telegram_utils.py   # Telegram工具
 ├── docs/
 │   └── ARCHITECTURE.md     # 架构文档
-└── examples/
-    └── test_utils.py       # 测试示例
+├── .env                    # 环境配置
+├── .claude_sessions/       # 会话目录（自动创建和清理）
+└── dispatcher.log          # 运行日志
 ```
 
 ### 测试
